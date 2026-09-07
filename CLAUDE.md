@@ -388,4 +388,5 @@ Write one TSV file per evaluation to `batch/tracker-additions/{num}-{company-slu
 
 **RULES:** no markdown bold (`**`), no dates (those go in the date column), no extra text (use the notes column) in the status field.
 @AGENTS.md
-<!-- Add anything Claude Code specific that other agents don't need -->
+
+<!-- Add Claude Code-specific guidance here only when it has no AGENTS.md counterpart. -->
