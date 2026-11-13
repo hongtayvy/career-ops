@@ -47,6 +47,17 @@ const INTERVAL_MULTIPLIERS = {
   '1 YEAR': 1,
 };
 
+// Base pay-period mapping (issue #6912): only base units ('1 HOUR', '1 DAY',
+// '1 WEEK', '1 MONTH', '1 YEAR') expose `period` and `posted`; sub- and
+// multi-unit intervals ('2 WEEK', '0.5 MONTH', '2 MONTH', etc.) omit both.
+const INTERVAL_TO_PERIOD = {
+  '1 HOUR': 'hour',
+  '1 DAY': 'day',
+  '1 WEEK': 'week',
+  '1 MONTH': 'month',
+  '1 YEAR': 'year',
+};
+
 /**
  * Parse compensation data from Ashby job object.
  * Returns structured salary object with min, max, and currency,
@@ -66,7 +77,7 @@ const INTERVAL_MULTIPLIERS = {
  * hand-built job object use it.
  *
  * @param {any} job - Ashby job object
- * @returns {{min: number, max: number, currency: string}|null}
+ * @returns {{min: number, max: number, currency: string, period?: string, posted?: {min?: number, max?: number}}|null}
  */
 export function parseCompensation(job) {
   const comp = job?.compensation;
@@ -161,10 +172,28 @@ export function parseCompensation(job) {
   // Ensure correct ordering (min <= max)
   const resolvedMin = /** @type {number} */ (min ?? max);
   const resolvedMax = /** @type {number} */ (max ?? min);
+
+  const period = Object.hasOwn(INTERVAL_TO_PERIOD, interval) ? INTERVAL_TO_PERIOD[interval] : undefined;
+  let posted;
+  if (period) {
+    if (minValue != null && maxValue != null) {
+      posted = {
+        min: Math.min(minValue, maxValue),
+        max: Math.max(minValue, maxValue),
+      };
+    } else if (minValue != null) {
+      posted = { min: minValue };
+    } else if (maxValue != null) {
+      posted = { max: maxValue };
+    }
+  }
+
   return {
     min: Math.min(resolvedMin, resolvedMax),
     max: Math.max(resolvedMin, resolvedMax),
     currency: currency.toUpperCase(),
+    ...(period ? { period } : {}),
+    ...(posted ? { posted } : {}),
   };
 }
 
@@ -562,7 +591,14 @@ export default {
         : entry;
       return await fetchFromEmbed(embedEntry, ctx);
     }
-    const jobs = Array.isArray(json?.jobs) ? json.jobs : [];
+    // { jobs: [] } is an empty board; any other envelope is a changed or failing
+    // API and must not read as "no open roles" (ADDING_A_PROVIDER.md,
+    // "Defensive parsing"). The embed path above draws the same line.
+    if (!json || !Array.isArray(json.jobs)) {
+      const got = json && typeof json === 'object' ? Object.keys(json).join(', ') : json === null ? 'null' : typeof json;
+      throw new Error(`ashby: unexpected response for ${entry.name} — expected jobs[], got: [${got}]`);
+    }
+    const jobs = json.jobs;
     const boardSlug = new URL(apiUrl).pathname.match(/^\/posting-api\/job-board\/([^/]+)\/?$/)?.[1] || '';
     return jobs.map(/** @param {any} j */ (j) => ({
       title: j.title || '',
