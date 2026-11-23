@@ -61,11 +61,11 @@ try {
 // copy made without `npm install`) died with a raw ERR_MODULE_NOT_FOUND stack
 // from the very check that exists to report missing dependencies. Loading them
 // dynamically lets that failure be caught and reported with the fix.
-let hasYamlContent, loadYaml, dotenv, AGENT_CLIS, validateProfile, EXAMPLE_PATH;
+let loadYaml, dotenv, AGENT_CLIS, validateProfile, EXAMPLE_PATH;
 let resolveExtractorMode, auditUserTemplates, browserLaunchOptions, resolveBrowserExecutable, snapshotBrowserProcessEnv, checkRemotePageBrowser;
 try {
   [
-    { hasYamlContent, loadYaml },
+    { loadYaml },
     { default: dotenv },
     { AGENT_CLIS },
     { validateProfile, EXAMPLE_PATH },
@@ -1296,7 +1296,8 @@ function emptyYamlPrereqs(root) {
   return USER_LAYER_PREREQS.filter((prereq) => {
     if (!prereq.emptyImpact || !prereqPresent(root, prereq)) return false;
     try {
-      return !hasYamlContent(readFileSync(prereqFile(root, prereq), 'utf-8'));
+      const value = loadYaml(readFileSync(prereqFile(root, prereq), 'utf-8'));
+      return value == null || (Object.prototype.toString.call(value) === '[object Object]' && Object.keys(value).length === 0);
     } catch {
       return false;
     }
@@ -1794,11 +1795,13 @@ const PERSONALIZATION_FILES = [
     path: 'modes/_profile.md',
     template: 'modes/_profile.template.md',
     impact: 'evaluations score against the template author\'s targeting, not yours',
+    emptyImpact: 'evaluations have no archetypes or targeting from your modes/_profile.md',
   },
   {
     path: 'modes/_brief.md',
     template: 'modes/_brief.template.md',
     impact: 'triage reads literal {placeholders} instead of your archetypes',
+    emptyImpact: 'triage has none of your archetypes',
   },
 ];
 
@@ -1813,7 +1816,7 @@ function templatePlaceholders(text) {
 // content. Missing files are NOT reported here — that is `missing`'s job.
 function unpersonalizedFiles(root) {
   const out = [];
-  for (const { path, template, impact } of PERSONALIZATION_FILES) {
+  for (const { path, template, impact, emptyImpact } of PERSONALIZATION_FILES) {
     const targetPath = join(root, ...path.split('/'));
     // The checkout's template first, as the web reads it, so doctor and the web
     // agree on which sections are still template text even when a separate data
@@ -1833,7 +1836,7 @@ function unpersonalizedFiles(root) {
     // placeholder, so it would pass as personalized while the web asks for
     // every section (#5340).
     if (!target.trim()) {
-      out.push({ path, reason: 'is empty', impact });
+      out.push({ path, reason: 'is empty', impact: emptyImpact });
       continue;
     }
     if (path === 'modes/_profile.md') {
@@ -1974,9 +1977,10 @@ function onboardingState(root) {
   // MCP project configuration belongs to the launch checkout. `root` is the
   // user-data layer and may point elsewhere under split-checkout installs.
   const mcpCheck = checkPlaywrightMcp(process.cwd(), activeCli);
+  const emptyPrereqs = emptyYamlPrereqs(root);
   const unpersonalized = [
     ...unpersonalizedFiles(root),
-    ...emptyYamlPrereqs(root).map(({ path, emptyImpact }) => ({ path, reason: EMPTY_YAML_REASON, impact: emptyImpact })),
+    ...emptyPrereqs.map(({ path, emptyImpact }) => ({ path, reason: EMPTY_YAML_REASON, impact: emptyImpact })),
   ];
   const titleFilterIssues = titleFilterConflicts(root);
   // Every other check in this function is data-layer and correctly uses this
@@ -2018,14 +2022,12 @@ function onboardingState(root) {
     });
   } catch { plugins = []; }
   return {
-    onboardingNeeded: missing.length > 0,
+    onboardingNeeded: missing.length > 0 || emptyPrereqs.length > 0,
     data_root: root,
     project_root: codeRoot,
     missing,
-    // Non-blocking by design: career-ops is meant to work out of the box, so an
-    // unedited personalization file must not gate the whole system. It DOES have
-    // to be visible — surfaced as its own field the agent can branch on rather
-    // than a string it has to pattern-match out of `warnings`.
+    // Template-derived Markdown warnings stay non-blocking. The empty YAML
+    // entries also tell onboarding which existing prerequisites need input.
     unpersonalized,
     // Present only when it fired: a coherent title_filter adds no key.
     ...(titleFilterIssues ? { titleFilterConflicts: titleFilterIssues } : {}),
